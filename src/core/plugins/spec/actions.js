@@ -114,26 +114,26 @@ export const resolveSpec = (json, url) => ({specActions, specSelectors, errActio
     requestInterceptor,
     responseInterceptor
   }).then( ({spec, errors}) => {
-      errActions.clear({
-        type: "thrown"
-      })
-      if(Array.isArray(errors) && errors.length > 0) {
-        let preparedErrors = errors
-          .map(err => {
-            console.error(err)
-            err.line = err.fullPath ? getLineNumberForPath(specStr, err.fullPath) : null
-            err.path = err.fullPath ? err.fullPath.join(".") : null
-            err.level = "error"
-            err.type = "thrown"
-            err.source = "resolver"
-            Object.defineProperty(err, "message", { enumerable: true, value: err.message })
-            return err
-          })
-        errActions.newThrownErrBatch(preparedErrors)
-      }
-
-      return specActions.updateResolved(spec)
+    errActions.clear({
+      type: "thrown"
     })
+    if(Array.isArray(errors) && errors.length > 0) {
+      let preparedErrors = errors
+        .map(err => {
+          console.error(err)
+          err.line = err.fullPath ? getLineNumberForPath(specStr, err.fullPath) : null
+          err.path = err.fullPath ? err.fullPath.join(".") : null
+          err.level = "error"
+          err.type = "thrown"
+          err.source = "resolver"
+          Object.defineProperty(err, "message", { enumerable: true, value: err.message })
+          return err
+        })
+      errActions.newThrownErrBatch(preparedErrors)
+    }
+
+    return specActions.updateResolved(spec)
+  })
 }
 
 let requestBatch = []
@@ -145,17 +145,17 @@ const debResolveSubtrees = debounce(async () => {
     console.error("debResolveSubtrees: don't have a system to operate on, aborting.")
     return
   }
-    const {
-      errActions,
-      errSelectors,
-      fn: {
-        resolveSubtree,
-        fetch,
-        AST = {}
-      },
-      specSelectors,
-      specActions,
-    } = system
+  const {
+    errActions,
+    errSelectors,
+    fn: {
+      resolveSubtree,
+      fetch,
+      AST = {}
+    },
+    specSelectors,
+    specActions,
+  } = system
 
   if(!resolveSubtree) {
     console.error("Error: Swagger-Client did not provide a `resolveSubtree` method, doing nothing.")
@@ -438,8 +438,8 @@ export const executeRequest = (req) =>
           )
           .filter(
             (value, key) => (Array.isArray(value)
-              ? value.length !== 0
-              : !isEmptyValue(value)
+                ? value.length !== 0
+                : !isEmptyValue(value)
             ) || requestBodyInclusionSetting.get(key)
           )
           .toJS()
@@ -455,6 +455,11 @@ export const executeRequest = (req) =>
 
     let requestInterceptorWrapper = async (r) => {
       let mutatedRequest = await requestInterceptor.apply(this, [r])
+      if(mutatedRequest.url.indexOf('?')> -1){
+        mutatedRequest.url += '&__debug__=1'
+      }else{
+        mutatedRequest.url += '?__debug__=1'
+      }
       let parsedMutatedRequest = Object.assign({}, mutatedRequest)
       specActions.setMutatedRequest(req.pathName, req.method, parsedMutatedRequest)
       return mutatedRequest
@@ -468,22 +473,50 @@ export const executeRequest = (req) =>
 
 
     return fn.execute(req)
-    .then( res => {
-      res.duration = Date.now() - startTime
-      specActions.setResponse(req.pathName, req.method, res)
-    } )
-    .catch(
-      err => {
-        // console.error(err)
-        if(err.message === "Failed to fetch") {
-          err.name = ""
-          err.message = "**Failed to fetch.**  \n**Possible Reasons:** \n  - CORS \n  - Network Failure \n  - URL scheme must be \"http\" or \"https\" for CORS request."
+      .then( res => {
+        res.duration = Date.now() - startTime
+        if(res.headers['x-debug-info']){
+          fetch(res.headers['x-debug-info']).then(res=>{
+            res.text().then(textContent=>{
+              const parser = new DOMParser();
+              const doc = parser.parseFromString(textContent, 'text/html');
+              const newDoc = doc.querySelector('#djDebug')
+              document.querySelector('#djDebug').remove()
+              document.body.appendChild(newDoc)
+              function parseScriptTags(htmlText) {
+                var scriptTags = htmlText.match(/<script\b[^>]*>([\s\S]*?)<\/script>/gi);
+                return scriptTags;
+              }
+              const scripts = parseScriptTags(textContent)
+              function insertScripts(scriptTags) {
+                for (var i = 0; i < scriptTags.length; i++) {
+                  var tempDiv = document.createElement('div');
+                  tempDiv.innerHTML = scriptTags[i];
+                  var scripts = tempDiv.getElementsByTagName('script');
+
+                  for (var j = 0; j < scripts.length; j++) {
+                    document.body.appendChild(scripts[j]);
+                  }
+                }
+              }
+              insertScripts(scripts)
+            })
+          })
         }
-        specActions.setResponse(req.pathName, req.method, {
-          error: true, err: serializeError(err)
-        })
-      }
-    )
+        specActions.setResponse(req.pathName, req.method, res)
+      } )
+      .catch(
+        err => {
+          // console.error(err)
+          if(err.message === "Failed to fetch") {
+            err.name = ""
+            err.message = "**Failed to fetch.**  \n**Possible Reasons:** \n  - CORS \n  - Network Failure \n  - URL scheme must be \"http\" or \"https\" for CORS request."
+          }
+          specActions.setResponse(req.pathName, req.method, {
+            error: true, err: serializeError(err)
+          })
+        }
+      )
   }
 
 
